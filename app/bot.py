@@ -370,7 +370,7 @@ def get_repl_logs(update: Update, context):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(hostname=host, username=username, password=password, port=port)
-    stdin, stdout, stderr = client.exec_command('docker cp db_image:/var/log/postgresql/postgres.log . && cat postgres.log | grep repl')
+    stdin, stdout, stderr = client.exec_command('cat /var/log/postgresql/postgresql-15-main.log | tail -n 50 | grep repl')
     data = stdout.read()
     logger.info("%s", data)
     logger.error("%s", stderr.read())
