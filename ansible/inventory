@@ -1,0 +1,6 @@
+[bot_and_db]
+10.0.2.19 ansible_user=ansible ansible_password=ansible
+
+[db_repl]
+10.0.2.15 ansible_user=ansible ansible_password=ansible
+

@@ -1,0 +1,161 @@
+- name: Deploy bot with database
+  hosts: bot_and_db
+  become: true
+
+  tasks:
+    - name: Install packs
+      apt:
+        name:
+          - git
+          - python3.10
+          - python3-pip
+          - postgresql
+          - postgresql-contrib
+      become: true
+      tags:
+        - packs
+    - name: Clone bot
+      git:
+        repo: https://github.com/Serikenon/PT-Botik
+        dest: /home/ansible/PT-Botik
+        version: main
+      tags:
+        - code
+    - name: Setup environment
+      command: pip3 install -r /home/ansible/PT-Botik/app/requirements.txt
+      args:
+        chdir: /home/ansible/PT-Botik/app
+      tags:
+        - environment
+    - name: Copy .env
+      copy:
+        src: .env
+        dest: /home/ansible/PT-Botik/app
+      tags:
+        - env
+    - name: Start PostgresSQL
+      become: true
+      service:
+        name: postgresql
+        state: started
+      tags:
+        - start_db
+- name: Create db and table
+  hosts: bot_and_db
+  become: true
+  vars_files:
+    - secrets.yml
+  tasks:
+    - name: create db
+      become_user: "{{ DB_USER }}"
+      postgresql_db:
+        name: "{{ DB_DATABASE }}"
+        owner: "{{ DB_USER }}"
+        login_user: "{{ DB_USER }}"
+        login_password: "{{ DB_PASSWORD }}"
+    - name: create tables
+      become_user: "{{ DB_USER }}"
+      postgresql_query:
+        db: "{{ DB_DATABASE }}"
+        login_user: "{{ DB_USER }}"
+        login_password: "{{ DB_PASSWORD }}"
+        query: |
+          CREATE TABLE IF NOT EXISTS emails (
+            id SERIAL PRIMARY KEY,
+            email VARCHAR(255)
+          );
+          CREATE TABLE IF NOT EXISTS phone_num (
+            id SERIAL PRIMARY KEY,
+            numbers VARCHAR(255)
+          );
+          DO $$
+          BEGIN
+            IF NOT EXISTS(SELECT * FROM pg_catalog.pg_roles WHERE rolname = '{{ DB_REPL_USER }}') THEN
+              CREATE ROLE {{ DB_REPL_USER }} WITH REPLICATION LOGIN ENCRYPTED PASSWORD '{{ DB_REPL_PASSWORD }}';
+            END IF;
+          END$$;
+          DO $$
+          BEGIN
+            IF NOT EXISTS(SELECT * FROM pg_replication_slots WHERE slot_name = 'replication_slot') THEN
+              SELECT pg_create_physical_replication_slot('replication_slot');
+            END IF;
+          END$$;
+    - name: Make dir for logs
+      command: mkdir -p /oracle/pg_data/archive/
+    - name: Create db user
+      become_user: "{{ DB_USER }}"
+      command: psql -c "ALTER ROLE {{ DB_USER }} PASSWORD '{{ DB_USER }}';"
+    - name: edit postgresql.conf
+      become_user: "{{ DB_USER }}"
+      lineinfile:
+        path: /etc/postgresql/14/main/postgresql.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+       - { regexp: '^#?listen_addresses\s*=', line: "listen_addresses = '*'" }
+       - { regexp: '^#?archive_mode\s*=', line: "archive_mode = on" }
+       - { regexp: '^#?archive_command\s*=', line: "archive_command = 'cp %p /oracle/pg_data/archive/%f'" }
+       - { regexp: '^#?max_wal_senders\s*=', line: "max_wal_senders = 10" }
+       - { regexp: '^#?wal_level\s*=', line: "wal_level = replica" }
+       - { regexp: '^#?wal_log_hints\s*=', line: "wal_log_hints = on" }
+       - { regexp: '^#?log_replication_commands\s*=', line: "log_replication_commands = on" }
+    - name: edit pg_hba.conf
+      lineinfile:
+        path: /etc/postgresql/14/main/pg_hba.conf
+        line: |
+         host all all {{ PRIMARY_HOST }}/24 password
+         host replication {{ DB_REPL_USER }} {{ REPLICATION_HOST }}/24 scram-sha-256
+
+    - name: Restart postgres
+      service:
+        name: postgresql
+        state: restarted
+
+- name: Deploy replication DB
+  hosts: db_repl
+  become: true
+  vars_files:
+    - secrets.yml
+  tasks:
+    - name: Install PostgreSQL
+      become: true
+      apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+      become: true
+      tags:
+        - packforrepl
+
+    - name: Edit postgresql.conf
+      become_user: "{{ DB_USER }}"
+      lineinfile:
+        path: /etc/postgresql/14/main/postgresql.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+       - { regexp: '^#?listen_addresses\s*=', line: "listen_addresses = '*'" }
+    - name: Stop PostgreSQL
+      become: true
+      systemd:
+        name: postgresql
+        state: stopped
+    - name: Replication
+      become_user: "{{ DB_USER }}"
+      command: |
+        bash -c "
+        su {{ DB_USER }}
+        rm -rf /var/lib/postgresql/14/main
+        export PGPASSWORD={{ DB_REPL_PASSWORD }} &&
+        pg_basebackup -R -h {{ PRIMARY_HOST }} -U {{ DB_REPL_USER }} -D /var/lib/postgresql/14/main -P
+        "
+    - name: Start replication DB
+      systemd:
+        name: postgresql
+        state: started
+- name: Start bot
+  hosts: bot_and_db
+  become: true
+  tasks:
+    - name: Run Python script
+      command: python3.10 /home/ansible/PT-Botik/app/bot.py
