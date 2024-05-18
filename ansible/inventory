@@ -1,6 +1,6 @@
 [bot_and_db]
-<IP-address> ansible_user=<USER> ansible_password=<PASSWORD>
+<ip-address> ansible_user=<USER> ansible_password=<PASSWORD>
 
 [db_repl]
-<IP-address> ansible_user=<USER> ansible_password=<PASSWORD>
+<ip-address> ansible_user=<USER> ansible_password=<PASSWORD>
 
