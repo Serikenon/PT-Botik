@@ -53,7 +53,6 @@ services:
         build:
             context: ./db_repl
             dockerfile: Dockerfile
-        image: 10.0.2.14:5000/db-repl-image
         container_name: db_repl_image
         ports:
           - 5433:${DB_PORT}
