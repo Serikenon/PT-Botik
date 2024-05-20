@@ -1,4 +1,0 @@
-.env
-ansible/.env
-ansible/secrets.yml
-ansible/ansible.cfg
